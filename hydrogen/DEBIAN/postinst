@@ -1,0 +1,10 @@
+#!/bin/bash
+
+#-----[ Apache ]
+a2dissite default
+a2dissite default-ssl
+a2ensite daxiangroup
+a2ensite gitlist
+
+#-----[ RESTART BLOCK ]
+/etc/init.d/apache2 restart
