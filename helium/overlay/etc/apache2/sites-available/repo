@@ -1,0 +1,13 @@
+<VirtualHost *:80>
+        ServerName      ubuntu.daxiangroup.com
+        DocumentRoot    /opt/local/repo
+        LogFormat "[%{%Y.%m.%d %H:%M:%S}t] %h %{Host}i %l %u \"%r\" %>s %O \"%{Referer}i\" \"%{User-Agent}i\"" vhost_access
+        CustomLog /var/log/apache2/other_vhosts_access.log vhost_access
+        ErrorLog /var/log/apache2/error.log
+        <Directory /opt/local/repo>
+                Options None
+                AllowOverride None
+                Order allow,deny
+                allow from all
+        </Directory>
+</VirtualHost>
