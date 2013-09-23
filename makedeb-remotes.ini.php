@@ -17,4 +17,11 @@ return array(
         'label' => 'daxiangroup',
         'tag'   => 'corporate-1',
     ),
+    'adrienneskitchen' => array(
+        'type'  => 'site',
+        'url'   => 'https://github.com/daxiangroup/adrienneskitchen/archive/',
+        'label' => 'adrienneskitchen',
+        'tag'   => 'master',
+        //'deps'  => 'apache2, php5, php-mysql',
+    ),
 );

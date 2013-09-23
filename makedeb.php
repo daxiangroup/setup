@@ -1,51 +1,128 @@
 #!/usr/bin/php
-<?php
+<?php namespace DG;
 
-class PackageBuilder {
+use \Exception;
+use \ZipArchive;
+
+define('PAD1', '   ');
+define('PAD2', '      ');
+define('PAD3', '         ');
+
+date_default_timezone_set('America/New_York');
+
+class PackageBuilder
+{
+    //const PATH_build          = '/noc/build';
+    const PATH_BUILD          = '/Users/tylers/Sites/DG-setup/';
+    const PATH_PACKAGES       = '/Users/tylers/Sites/DG-setup/packages/';
+    const PATH_BINARIES       = '/Users/tylers/Sites/DG-setup/binaries/';
+    const PATH_SITE_DIRECTORY = 'opt/sites';
+    const CREATE_PERMISSION   = 0755;
+    const FILE_REMOTES        = 'makedeb-remotes.ini.php';
+
+    // Build stage constants
+    const STAGE_VALIDATION      = '[.Validation........]';
+    const STAGE_BUILD           = '[.Build.............]';
+    const STAGE_BUILD_STRUCTURE = '[.Build - Structure.]';
+    const STAGE_BUILD_PACKAGE   = '[.Build - Package...]';
+    const STAGE_GENERAL         = '[.General...........]';
+    const STAGE_REMOTES         = '[.Remotes...........]';
+    const STAGE_CLEANUP         = '[.Cleaning Files....]';
+
+    private $remotes      = array();
+    private $buildRemotes = array();
+
     public function __construct()
     {
         // General (setup) constants
-        //define('PATH_build',          '/noc/build');
-        define('PATH_build',          '/Users/tylers/Sites/hydrogen/scripts');
-        define('PATH_packages',       PATH_build.'/packages');
-        define('PATH_site_directory', '/opt/sites');
-        define('CREATE_permission',   0755);
-        define('FILE_remotes',        'makedeb-remotes.ini.php');
+        $this->remotes = $this->buildRemotes = require_once(self::FILE_REMOTES);
+        $this->buildPaths();
+    }
 
-        // Build stage constants
-        define('STAGE_init',               'init');
-        define('STAGE_general',            'general');
-        define('STAGE_building_structure', 'building-structure');
-        define('STAGE_remotes',            'remotes');
-        define('STAGE_cleanup',            'cleanup');
-        define('STAGE_building_package',   'building-package');
-
-        $this->stages = array(
-            STAGE_init               => '[               Init ]',
-            STAGE_general            => '[            General ]',
-            STAGE_building_structure => '[ Building Structure ]',
-            STAGE_remotes            => '[            Remotes ]',
-            STAGE_cleanup            => '[  Cleaning Up Files ]',
-            STAGE_building_package   => '[   Building Package ]',
-        );
-
-        if (!file_exists(FILE_remotes)) {
-            $this->_log_message($this->stages[STAGE_init], 'Error: '.FILE_remotes.' is missing, quiting...');
-            exit(0);
+    private function buildPaths()
+    {
+        if (is_dir(self::PATH_PACKAGES)) {
+            $this->logMessage(self::STAGE_BUILD, 'Unlinking previous packages directory...', false);
+            $this->recursiveRemoveDirectory(self::PATH_PACKAGES);
+            $this->logMessage('', ' OK');
         }
-        $this->remotes = require_once(FILE_remotes);
+
+        $this->logMessage(self::STAGE_BUILD, 'Creating packages directory...', false);
+        if (!mkdir(self::PATH_PACKAGES, self::CREATE_PERMISSION, true)) {
+            $this->logMessage(self::STAGE_BUILD, '   Error: Could not create packages directory', true, true);
+            exit(3);
+        }
+        $this->logMessage('', ' OK');
+
+        $this->logMessage(self::STAGE_BUILD, 'Creating binaries directory...', false);
+        if (!is_dir(self::PATH_BINARIES)) {
+            mkdir(self::PATH_BINARIES, self::CREATE_PERMISSION, true);
+        }
+        $this->logMessage('', ' OK');
     }
 
     /**
      * Function that logs messages to the screen in a consistent fashion. Takes a
      * build stage label to prefix the message with, along with the actual message.
      *
-     * @param  $stage_id     string
+     * @param  $stage        string
      * @param  $message      string
      * @return void
      */
-    function log_message($stage_id, $message) {
-        echo $stage_id.': '.$message.PHP_EOL;
+    public static function logMessage($stage = '', $message, $appendNewLine = true, $prependNewLine = false)
+    {
+        echo ($prependNewLine ? PHP_EOL : '').$stage.($stage == '' ? '' : ' ').$message.($appendNewLine ? PHP_EOL : '');
+    }
+
+    // The M&P!
+    public function buildPackages($packages)
+    {
+        $this->logMessage(self::STAGE_BUILD, 'Beginning build process!');
+
+        foreach ($packages as $package) {
+            $this->logMessage(self::STAGE_BUILD, PAD1.'---[ '.$package.' ]---', true, true);
+
+            $tmp = explode('/', $package);
+            $package = $tmp[0];
+            if (count($tmp) > 1) {
+                $this->remotes[$package]['tag'] = $tmp[1];
+            }
+
+            // Let's first make sure we have a definition for the supplied package
+            if (!isset($this->remotes[$package])) {
+                $this->logMessage(self::STAGE_BUILD, PAD2.'Error: The package \''.$package.'\' has no definition, skipping!');
+                unset($this->buildRemotes[$package]);
+                continue;
+            }
+            // Ensure that it is an array in the definition
+            if (!is_array($this->remotes[$package])) {
+                $this->logMessage(self::STAGE_BUILD, PAD2.'Error: The package \''.$package.'\' has incomplete definition, skipping!');
+                unset($this->buildRemotes[$package]);
+                continue;
+            }
+
+            if (!$this->buildStructure($package)) {
+                $this->logMessage(self::STAGE_BUILD_STRUCTURE, $package.' | Couldn\'t properly build structure, skipping');
+                unset($this->buildRemotes[$package]);
+                continue;
+            }
+
+            if (!$packageName = $this->getRemote($package)) {
+                $this->logMessage(self::STAGE_REMOTES, $package.' | Couldn\'t properly transfer remote, skipping');
+                unset($this->buildRemotes[$package]);
+                continue;
+            }
+
+            if (!$this->unzipRemote($package, $packageName)) {
+                $this->logMessage(self::STAGE_REMOTES, $package.' | Couldn\'t unzip remote, skipping');
+                unset($this->buildRemotes[$package]);
+                continue;
+            }
+
+            //$this->cleanAdminFiles($package);
+            $this->buildControlFile($package);
+            $this->buildPackage($package);
+        }
     }
 
     /**
@@ -56,60 +133,93 @@ class PackageBuilder {
      * @param $site_data    array
      * @return void
      */
-    function build_structure($site, $site_data) {
-        $status = true;
+    private function buildStructure($package)
+    {
+        $packageData = $this->remotes[$package];
 
-        if (is_dir($site)) {
-            $this->log_message($this->stages[STAGE_building_structure], $site.' |    Directory \''.$site.'\' already exists, unlinking');
-            $this->recursive_remove_directory($site);
+        $this->logMessage(self::STAGE_BUILD_STRUCTURE, PAD2.'Bulding package directory structure...', false);
+
+        if (is_dir(self::PATH_PACKAGES.$package)) {
+            $this->logMessage(STAGE_BUILD_STRUCTURE, $package.' |    Directory \''.$package.'\' already exists, unlinking');
+            $this->recursiveRemoveDirectory(self::PATH_PACKAGES.$package);
         }
 
         // Making DEBIAN directory for control and pre/post files
-        $status = mkdir($site.'/DEBIAN', CREATE_permission, true);
-        if ($status === false) {
-            throw new Exception('Creating '.$site.'/DEBIAN');
+        $path = self::PATH_PACKAGES.$package.'/DEBIAN';
+        if (!mkdir($path, self::CREATE_PERMISSION, true)) {
+            $this->logMessage(self::STAGE_BUILD_STRUCTURE, $package.' | Couldn\'t create '.$path);
+            return false;
         }
 
-        switch ($site_data['type']) {
+        switch ($packageData['type']) {
             case 'site':
-                $status = mkdir($site.PATH_site_directory.'/'.$site_data['label'], CREATE_permission, true);
-                if ($status === false) {
-                    throw new Exception('Creating '.$site.PATH_site_directory.'/',$site_data['label']);
+                $path = self::PATH_PACKAGES.$package.'/'.self::PATH_SITE_DIRECTORY.'/'.$packageData['label'];
+                if (!mkdir($path, self::CREATE_PERMISSION, true)) {
+                    $this->logMessage(self::STAGE_BUILD_STRUCTURE, $package.' | Couldn\'t create '.$path);
+                    return false;
                 }
+                break;
+        }
+
+        $this->logMessage('', ' OK');
+        return true;
+    }
+
+    private function buildControlFile($package)
+    {
+        $packageData = $this->remotes[$package];
+        $deps = (isset($packageData['deps']) ? $packageData['deps'] : 'apache2, php5');
+
+        $this->logMessage(self::STAGE_BUILD_PACKAGE, PAD2.'Creating control file...', false);
+        //Version: 1.".date("ymd").(isset($packageData['tag']) ? '-'.$packageData['tag'] : '')."
+        //Version: 1.".date("ymdHis")."
+
+        $contents = "Package: dgrp-".$packageData['type']."-".$packageData['label']."
+Version: 1.".date("ymdHi").'.'.$packageData['tag']."
+Section: base
+Priority: optional
+Architecture: all
+Depends: ".$deps."
+Maintainer: ts@daxiangroup.com
+Description: ".(isset($packageData['description']) ? $packageData['description'] : 'No Description')."
+";
+
+        $fp = fopen(self::PATH_PACKAGES.$package.'/DEBIAN/control', 'w');
+        fwrite($fp, $contents);
+        fclose($fp);
+        chmod(self::PATH_PACKAGES.$package.'/DEBIAN/control', self::CREATE_PERMISSION);
+        $this->logMessage('', ' OK');
+    }
+
+    private function getRemote($package)
+    {
+        $verbose = false;
+        $this->logMessage(self::STAGE_REMOTES, PAD2.'Transfering remote to local machine...', ($verbose ? true : false));
+
+        switch ($this->remotes[$package]['type']) {
+            case 'site':
+                return $this->getRemoteSite($package);
+                break;
+            case 'setup':
+                return $this->get_remote_setup();
                 break;
         }
     }
 
-    function build_control_file($site, $site_data) {
-        $this->log_message($this->stages[STAGE_building_structure], $site.' |    Creating control file');
+    private function getRemoteSite($package)
+    {
+        $verbose = false;
+        $packageData = $this->remotes[$package];
 
-        $fp = fopen($site.'/DEBIAN/control', 'w');
-        fwrite($fp, "Package: dg-".$site_data['type']."-".$site_data['label']."
-Version: ".date("ymd").(isset($site_data['tag']) ? '-'.$site_data['tag'] : '')."
-Section: base
-Priority: optional
-Architecture: all
-Depends: apache2, php5
-Maintainer: ts@daxiangroup.com
-Description: ".(isset($site_data['description']) ? $site_data['description'] : 'No Description')."
-");
-        fclose($fp);
-        chmod($site.'/DEBIAN/control', CREATE_permission);
-    }
+        //$filename = explode('/', $packageData['url']);
+        //$filename = self::PATH_PACKAGES.$package.'/'.self::PATH_SITE_DIRECTORY.'/'.$packageData['label'].$filename[sizeof($filename)-1];
+        $filename = self::PATH_PACKAGES.$package.'/'.self::PATH_SITE_DIRECTORY.'/'.$packageData['label'].'/'.$packageData['tag'].'.zip';
 
-    function get_remote($site, $site_data, $type) {
-        $this->log_message($this->stages[STAGE_remotes], $site.' | Getting remote locally');
-
-        switch ($type) {
-            case 'site':  return $this->get_remote_site($site, $site_data); break;
-            case' setup': return $this->get_remote_setup(); break;
+        if ($verbose) {
+            $this->logMessage(self::STAGE_REMOTES, PAD3.'Remote: '.$packageData['url'].$packageData['tag'].'.zip');
+            $this->logMessage(self::STAGE_REMOTES, PAD3.'Local: '.$filename);
+            $this->logMessage(self::STAGE_REMOTES, PAD3.'Status:', false);
         }
-    }
-
-    function get_remote_site($site, $site_data) {
-
-        $filename = explode('/', $site_data['url']);
-        $filename = $site.'/'.$filename[sizeof($filename)-1];
 
         $out = fopen($filename, 'wb');
         $ch = curl_init();
@@ -117,77 +227,138 @@ Description: ".(isset($site_data['description']) ? $site_data['description'] : '
         curl_setopt($ch, CURLOPT_FILE, $out);
         curl_setopt($ch, CURLOPT_HEADER, false);
         curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
-        curl_setopt($ch, CURLOPT_URL, $site_data['url']);
+        curl_setopt($ch, CURLOPT_URL, $packageData['url'].$packageData['tag'].'.zip');
 
-        $this->log_message($this->stages[STAGE_remotes], $site.' |    Saving '.$site_data['url'].' to '.$filename);
-        curl_exec($ch);
+        if (!curl_exec($ch)) {
+            $this->logMessage('', 'Error');
+            return false;
+        }
 
         curl_close($ch);
 
+        $this->logMessage('', ' OK');
         return $filename;
     }
 
-    function unzip_remote($site, $site_data, $filename) {
-        $this->log_message($this->stages[STAGE_remotes], $site.' |    Unzipping '.$filename);
-
-        $zip = new ZipArchive;
-        if ($zip->open($filename) === true) {
-            // We're starting at 1 to avoid creating the .zip's top level directory
-            for($i=1; $i<$zip->numFiles; $i++) {
-                $tmp_filename = $zip->getNameIndex($i);
-                $tmp_fileinfo = pathinfo($tmp_filename);
-                copy("zip://".$filename."#".$tmp_filename, $site.PATH_site_directory.'/'.$site_data['label'].'/'.$tmp_fileinfo['basename']);
-                $this->log_message($this->stages[STAGE_remotes], $site.' |    + Expanding '.$site.PATH_site_directory.'/'.$site_data['label'].'/'.$tmp_fileinfo['basename']);
-            }
-
-            $this->log_message($this->stages[STAGE_remotes], $site.' |    Unzip was successful!');
-            $zip->close();
-        }
-
-        $this->log_message($this->stages[STAGE_remotes], $site.' |    - Unlinking '.$filename);
-        unlink($filename);
-    }
-
-    function clean_admin_files($site, $directory) {
-        $delete_files = array(
+    private function unzipRemote($package, $packageName)
+    {
+        $packageData = $this->remotes[$package];
+        $path        = self::PATH_PACKAGES.$package.'/'.self::PATH_SITE_DIRECTORY.'/'.$packageData['label'].'/';
+        $ignoreFiles = array(
             '.gitignore',
             'readme.md',
         );
 
-        if (is_readable($directory)) {
-            $handle = opendir($directory);
-            while (FALSE !== ($item = readdir($handle))) {
-                if ($item != '.' && $item != '..') {
-                    $path = $directory.'/'.$item;
-                    if (is_dir($path)) {
-                        $this->clean_admin_files($site, $path);
-                    } elseif (in_array($item, $delete_files)) {
-                        $this->log_message($this->stages[STAGE_cleanup], $site.' |    - Unlinking '.$path);
-                        unlink($path);
-                    }
-                }
+        $this->logMessage(self::STAGE_REMOTES, PAD2.'Unzipping '.$packageName);
+
+        $zip = new ZipArchive;
+        if ($zip->open($packageName) === true) {
+            // We're starting at 1 to avoid creating the .zip's top level directory
+            $column  = 0;
+            $verbose = false;
+            $max = 80;
+
+            if (!$verbose) {
+                $this->logMessage(self::STAGE_REMOTES, PAD3.'', false);
             }
 
-            closedir($handle);
+            for ($i=1; $i<$zip->numFiles; $i++) {
+                $prepend      = false;
+                $tmp_filename = $zip->getNameIndex($i);
+                $src          = 'zip://'.$packageName.'#'.$tmp_filename;
+                $tmp_fileinfo = pathinfo($tmp_filename);
+                //echo $tmp_filename.PHP_EOL;
+                //print_r($tmp_fileinfo);
+
+                $dst  = $path.preg_replace('/^'.$packageData['label'].'-'.$packageData['tag'].'\/?/', '', $tmp_fileinfo['dirname']);
+                $dst .= '/'.$tmp_fileinfo['basename'];
+
+                //echo "BASENAME: ".basename($dst).PHP_EOL;
+                if (array_search(basename($dst), $ignoreFiles) !== false) {
+                    if ($verbose) {
+                        $this->logMessage(self::STAGE_REMOTES, PAD3.'i Ignoring '.$dst);
+                    }
+                    else {
+                        if ($column == $max) {
+                            $column = 0;
+                            $this->logMessage(self::STAGE_REMOTES, PAD3.'', false, true);
+                        }
+                        $this->logMessage('', 'i', false);
+                    }
+
+                    $column++;
+
+                    continue;
+                }
+
+                // If the file we're parsing from the ZipArchive is a dirctory,
+                // we should make the directory in the destination.
+                if (!isset($tmp_fileinfo['extension']) && !is_dir($dst)) {
+                    mkdir($dst, self::CREATE_PERMISSION, true);
+                }
+
+                // If there is an extension in the pathinfo array, it's a file
+                // we're parsing and should copy it from the ZipArchive to the
+                // destination.
+                if (isset($tmp_fileinfo['extension'])) {
+                    copy($src, $dst);
+                }
+
+                //echo 'src: '.$src.PHP_EOL.'dst: '.$dst.PHP_EOL.'base: '.dirname($dst).PHP_EOL;
+                //copy("zip://".$packageName."#".$tmp_filename, self::PATH_PACKAGES.$package.'/'.self::PATH_SITE_DIRECTORY.'/'.$packageData['label'].'/'.$tmp_fileinfo['basename']);
+
+                if ($verbose) {
+                    $this->logMessage(self::STAGE_REMOTES, PAD3.'+ Expanding '.$dst);
+                }
+                else {
+                    if ($column == $max) {
+                        $column = 0;
+                        $this->logMessage(self::STAGE_REMOTES, PAD3.'', false, true);
+                    }
+                    $this->logMessage('', '.', false);
+                }
+
+                $column++;
+            }
+
+            $zip->close();
         }
+
+        if ($verbose) {
+            $this->logMessage(self::STAGE_REMOTES, PAD3.'- Unlinking '.$packageName);
+        }
+        else {
+            if ($column == $max) {
+                $column = 0;
+                $this->logMessage(self::STAGE_REMOTES, PAD3.'', false, true);
+            }
+            $this->logMessage('', '-');
+        }
+        unlink($packageName);
+
+        return true;
     }
 
-    function build_package($site) {
-        $this->log_message($this->stages[STAGE_building_package], $site.' | Building package \''.$site.'\'');
-        passthru('dpkg --build '.$site.' '.PATH_packages);
-        $this->log_message($this->stages[STAGE_building_package], $site.' | Package \''.$site.'\' Complete');
+    private function buildPackage($package)
+    {
+        $this->logMessage(self::STAGE_BUILD_PACKAGE, PAD2.'Building package \''.$package.'\'...', false);
+        ob_start();
+        @system('dpkg --build '.self::PATH_PACKAGES.$package.' '.self::PATH_BINARIES);
+        ob_end_clean();
+        $this->logMessage('', ' OK');
     }
 
-
-    function iterate_site_remotes() {
+    /*
+    public function iterateSiteRemotes()
+    {
         if (!count($this->remotes['site'])) {
             return false;
         }
 
-        $this->log_message($this->stages[STAGE_general], '========( Iterating SITE Remotes )========');
+        $this->log_message($this->stages[STAGE_GENERAL], '========( Iterating SITE Remotes )========');
 
-        foreach ($this->remotes['site'] AS $site => $site_data) {
-            $this->log_message($this->stages[STAGE_building_structure], $site.' | Setting up package structure');
+        foreach ($this->remotes['site'] as $site => $site_data) {
+            $this->log_message($this->stages[STAGE_BUILDING_STRUCTURE], $site.' | Setting up package structure');
 
             // Trying to build the remote package structure. If it doesn't work, we need
             // to continue, as there's nothing to build from.
@@ -195,7 +366,7 @@ Description: ".(isset($site_data['description']) ? $site_data['description'] : '
                 $this->build_structure($site, $site_data);
             } catch (Exception $e) {
                 // Output the message and continue to the next element in the array.
-                $this->log_message($this->stages[STAGE_building_structure], $site.' | *** Error: '.$e->getMessage());
+                $this->log_message($this->stages[STAGE_BUILDING_STRUCTURE], $site.' | *** Error: '.$e->getMessage());
                 continue;
             }
 
@@ -219,7 +390,7 @@ Description: ".(isset($site_data['description']) ? $site_data['description'] : '
             }
 
             try {
-                $this->log_message($this->stages[STAGE_cleanup], $site.' | Cleaning up admin files');
+                $this->log_message($this->stages[STAGE_CLEANUP], $site.' | Cleaning up admin files');
                 $this->clean_admin_files($site, $site);
             } catch (Exception $e) {
                 echo 'Error: '.$e->getMessage();
@@ -244,27 +415,30 @@ Description: ".(isset($site_data['description']) ? $site_data['description'] : '
             }
         }
     }
+    */
 
-    function prompt($message) {
+    private function prompt($message)
+    {
         echo $message;
         $fp = fopen('php://stdin', 'r');
         return trim(fgets($fp));
     }
 
-    function recursive_remove_directory($directory, $empty=FALSE) {
-        if (substr($directory,-1) == '/') {
-            $directory = substr($directory,0,-1);
+    private function recursiveRemoveDirectory($directory, $empty = false)
+    {
+        if (substr($directory, -1) == '/') {
+            $directory = substr($directory, 0, -1);
         }
 
         if (!file_exists($directory) || !is_dir($directory)) {
-            return FALSE;
+            return false;
         } elseif (is_readable($directory)) {
             $handle = opendir($directory);
-            while (FALSE !== ($item = readdir($handle))) {
+            while (false !== ($item = readdir($handle))) {
                 if ($item != '.' && $item != '..') {
                     $path = $directory.'/'.$item;
                     if (is_dir($path)) {
-                        $this->recursive_remove_directory($path);
+                        $this->recursiveRemoveDirectory($path);
                     } else {
                         unlink($path);
                     }
@@ -273,22 +447,56 @@ Description: ".(isset($site_data['description']) ? $site_data['description'] : '
 
             closedir($handle);
 
-            if ($empty == FALSE) {
-                if(!rmdir($directory)) {
-                    return FALSE;
+            if ($empty == false) {
+                if (!rmdir($directory)) {
+                    return false;
                 }
             }
         }
 
-        return TRUE;
+        return true;
     }
 }
 
 // MAIN
-$opts = getopt('', array('help::', 'ref:', 'csv:', 'pause::', 'offset::', 'limit::'));
+$optsShort = 'v';
+$optsLong  = array('farts', 'verbose');
 
-$packageBuilder = new PackageBuilder();
-$packageBuilder->iterate_site_remotes();
+$opts = getopt($optsShort, $optsLong);
+
+$arguments = $argv;
+print_r($arguments);
+
+foreach ($optsLong as $opt) {
+    echo $opt.PHP_EOL;
+    if ($idx = array_search('--'.$opt, $arguments) !== false) {
+        echo $idx.PHP_EOL;
+        unset($arguments[$idx]);
+    }
+}
+
+array_shift($arguments);
+print_R($arguments);
+die();
+
+$PackageBuilder = new PackageBuilder();
+
+// VALIDATE!
+if (count($arguments) === 0) {
+    // No packages passed in to build
+    PackageBuilder::logMessage($PackageBuilder::STAGE_VALIDATION, 'Error: Missing packages to build!');
+    exit(1);
+}
+
+if (!file_exists(PackageBuilder::FILE_REMOTES)) {
+    PackageBuilder::logMessage($PackageBuilder::STAGE_VALIDATION, 'Error: '.$PackageBuilder::FILE_REMOTES.' is missing, quiting...');
+    exit(3);
+}
+
+// BUILD!
+$PackageBuilder->buildPackages($arguments);
+
+//$PackageBuilder->iterate_site_remotes();
 
 #for i in `ls -l $PATH_setup | grep ^d | awk {'print $9'}`; do
 #    dpkg --build $i $PATH_packages;
