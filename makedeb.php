@@ -31,6 +31,7 @@ class PackageBuilder
 
     private $remotes      = array();
     private $buildRemotes = array();
+    private $verbose      = false;
 
     public function __construct()
     {
@@ -193,8 +194,7 @@ Description: ".(isset($packageData['description']) ? $packageData['description']
 
     private function getRemote($package)
     {
-        $verbose = false;
-        $this->logMessage(self::STAGE_REMOTES, PAD2.'Transfering remote to local machine...', ($verbose ? true : false));
+        $this->logMessage(self::STAGE_REMOTES, PAD2.'Transfering remote to local machine...', ($this->verbose ? true : false));
 
         switch ($this->remotes[$package]['type']) {
             case 'site':
@@ -208,14 +208,13 @@ Description: ".(isset($packageData['description']) ? $packageData['description']
 
     private function getRemoteSite($package)
     {
-        $verbose = false;
         $packageData = $this->remotes[$package];
 
         //$filename = explode('/', $packageData['url']);
         //$filename = self::PATH_PACKAGES.$package.'/'.self::PATH_SITE_DIRECTORY.'/'.$packageData['label'].$filename[sizeof($filename)-1];
         $filename = self::PATH_PACKAGES.$package.'/'.self::PATH_SITE_DIRECTORY.'/'.$packageData['label'].'/'.$packageData['tag'].'.zip';
 
-        if ($verbose) {
+        if ($this->verbose) {
             $this->logMessage(self::STAGE_REMOTES, PAD3.'Remote: '.$packageData['url'].$packageData['tag'].'.zip');
             $this->logMessage(self::STAGE_REMOTES, PAD3.'Local: '.$filename);
             $this->logMessage(self::STAGE_REMOTES, PAD3.'Status:', false);
@@ -255,10 +254,9 @@ Description: ".(isset($packageData['description']) ? $packageData['description']
         if ($zip->open($packageName) === true) {
             // We're starting at 1 to avoid creating the .zip's top level directory
             $column  = 0;
-            $verbose = false;
             $max = 80;
 
-            if (!$verbose) {
+            if (!$this->verbose) {
                 $this->logMessage(self::STAGE_REMOTES, PAD3.'', false);
             }
 
@@ -275,7 +273,7 @@ Description: ".(isset($packageData['description']) ? $packageData['description']
 
                 //echo "BASENAME: ".basename($dst).PHP_EOL;
                 if (array_search(basename($dst), $ignoreFiles) !== false) {
-                    if ($verbose) {
+                    if ($this->verbose) {
                         $this->logMessage(self::STAGE_REMOTES, PAD3.'i Ignoring '.$dst);
                     }
                     else {
@@ -307,7 +305,7 @@ Description: ".(isset($packageData['description']) ? $packageData['description']
                 //echo 'src: '.$src.PHP_EOL.'dst: '.$dst.PHP_EOL.'base: '.dirname($dst).PHP_EOL;
                 //copy("zip://".$packageName."#".$tmp_filename, self::PATH_PACKAGES.$package.'/'.self::PATH_SITE_DIRECTORY.'/'.$packageData['label'].'/'.$tmp_fileinfo['basename']);
 
-                if ($verbose) {
+                if ($this->verbose) {
                     $this->logMessage(self::STAGE_REMOTES, PAD3.'+ Expanding '.$dst);
                 }
                 else {
@@ -324,7 +322,7 @@ Description: ".(isset($packageData['description']) ? $packageData['description']
             $zip->close();
         }
 
-        if ($verbose) {
+        if ($this->verbose) {
             $this->logMessage(self::STAGE_REMOTES, PAD3.'- Unlinking '.$packageName);
         }
         else {
@@ -347,75 +345,6 @@ Description: ".(isset($packageData['description']) ? $packageData['description']
         ob_end_clean();
         $this->logMessage('', ' OK');
     }
-
-    /*
-    public function iterateSiteRemotes()
-    {
-        if (!count($this->remotes['site'])) {
-            return false;
-        }
-
-        $this->log_message($this->stages[STAGE_GENERAL], '========( Iterating SITE Remotes )========');
-
-        foreach ($this->remotes['site'] as $site => $site_data) {
-            $this->log_message($this->stages[STAGE_BUILDING_STRUCTURE], $site.' | Setting up package structure');
-
-            // Trying to build the remote package structure. If it doesn't work, we need
-            // to continue, as there's nothing to build from.
-            try {
-                $this->build_structure($site, $site_data);
-            } catch (Exception $e) {
-                // Output the message and continue to the next element in the array.
-                $this->log_message($this->stages[STAGE_BUILDING_STRUCTURE], $site.' | *** Error: '.$e->getMessage());
-                continue;
-            }
-
-            try {
-                $this->build_control_file($site, $site_data);
-            } catch (Exception $e) {
-                echo 'Error: '.$e->getMessage();
-            }
-
-            // Get the remote to the local machine.
-            try {
-                $filename = $this->get_remote($site, $site_data, 'site');
-            } catch (Exception $e) {
-                echo 'Error: '.$e->getMessage();
-            }
-
-            try {
-                $this->unzip_remote($site, $site_data, $filename);
-            } catch (Exception $e) {
-                echo 'Error: '.$e->getMessage();
-            }
-
-            try {
-                $this->log_message($this->stages[STAGE_CLEANUP], $site.' | Cleaning up admin files');
-                $this->clean_admin_files($site, $site);
-            } catch (Exception $e) {
-                echo 'Error: '.$e->getMessage();
-            }
-
-            try {
-                $this->build_package($site);
-            } catch (Expanding $e) {
-                echo 'Error: '.$e->getMessage();
-            }
-
-            switch ($this->prompt('Are you done [Y/n]: ')) {
-                case '':
-                case 'Y':
-                case 'y':
-                    echo 'ok!!';
-                    break;
-                case 'N':
-                case 'n':
-                    echo 'loser';
-                    break;
-            }
-        }
-    }
-    */
 
     private function prompt($message)
     {
@@ -456,28 +385,57 @@ Description: ".(isset($packageData['description']) ? $packageData['description']
 
         return true;
     }
-}
 
-// MAIN
-$optsShort = 'v';
-$optsLong  = array('farts', 'verbose');
+    public static function parseArguments($arguments, $opts)
+    {
+        // Getting rid of script name in arguments.
+        array_shift($arguments);
 
-$opts = getopt($optsShort, $optsLong);
+        // Removing any short options from the argument string
+        foreach ($opts['optsShort'] as $opt) {
+            foreach ($arguments as $i => $argument) {
+                if (preg_match('/^-'.trim($opt, ':').'/', $argument)) {
+                    unset($arguments[$i]);
+                }
+            }
+        }
 
-$arguments = $argv;
-print_r($arguments);
+        // Removing any long options from the argument string
+        foreach ($opts['optsLong'] as $opt) {
+            foreach ($arguments as $i => $argument) {
+                if (preg_match('/^--'.trim($opt, ':').'/', $argument)) {
+                    unset($arguments[$i]);
+                }
+            }
+        }
 
-foreach ($optsLong as $opt) {
-    echo $opt.PHP_EOL;
-    if ($idx = array_search('--'.$opt, $arguments) !== false) {
-        echo $idx.PHP_EOL;
-        unset($arguments[$idx]);
+        // Remove any short or long option that is left in the argument string,
+        // anything found here is an unknown option an should just be removed.
+        foreach ($arguments as $i => $argument) {
+            if (preg_match('/^-/', $argument)) {
+                unset($arguments[$i]);
+            }
+        }
+
+        return $arguments;
+    }
+
+    public function setVerbose()
+    {
+        $this->verbose = true;
     }
 }
 
-array_shift($arguments);
-print_R($arguments);
-die();
+// MAIN
+$options = array(
+    'optsShort' => array('v'),
+    'optsLong'  => array('farts::', 'verbose'),
+);
+
+$opts = getopt(implode('', $options['optsShort']), $options['optsLong']);
+
+$arguments = $argv;
+$arguments = PackageBuilder::parseArguments($arguments, $options);
 
 $PackageBuilder = new PackageBuilder();
 
@@ -491,6 +449,11 @@ if (count($arguments) === 0) {
 if (!file_exists(PackageBuilder::FILE_REMOTES)) {
     PackageBuilder::logMessage($PackageBuilder::STAGE_VALIDATION, 'Error: '.$PackageBuilder::FILE_REMOTES.' is missing, quiting...');
     exit(3);
+}
+
+// Set the verbose mode for the PackageBuilder
+if (isset($opts['v']) || isset($opts['verbose'])) {
+    $PackageBuilder->setVerbose();
 }
 
 // BUILD!
