@@ -1,0 +1,7 @@
+#!/bin/bash
+
+#-----[ Apache ]
+a2dissite daxiangroup
+a2dissite gitlist
+a2dissite wiki
+/etc/init.d/apache2 stop 

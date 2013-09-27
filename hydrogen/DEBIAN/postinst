@@ -5,6 +5,7 @@ a2dissite default
 a2dissite default-ssl
 a2ensite daxiangroup
 a2ensite gitlist
+a2ensite wiki
 
 #-----[ RESTART BLOCK ]
 /etc/init.d/apache2 restart
