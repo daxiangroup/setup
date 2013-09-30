@@ -1,0 +1,8 @@
+#!/bin/bash
+
+#-----[ Apache ]
+a2dissite default
+a2dissite default-ssl
+
+#-----[ RESTART BLOCK ]
+/etc/init.d/apache2 restart
