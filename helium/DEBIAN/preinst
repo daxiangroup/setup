@@ -1,4 +1,7 @@
 #!/bin/sh
 
+#-----[ Date ]
+ln -sf /usr/share/zoneinfo/EST5EDT /etc/localtime
+
 #create repo path if it doesn't exist
 [ -f /opt/local/repo/binary ] || mkdir -p /opt/local/repo/binary

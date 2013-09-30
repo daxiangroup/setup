@@ -1,0 +1,4 @@
+#!/bin/bash
+
+#-----[ Date ]
+ln -sf /usr/share/zoneinfo/EST5EDT /etc/localtime
