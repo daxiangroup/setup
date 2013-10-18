@@ -10,7 +10,8 @@ return array(
     ),
     'lithium' => array(
         'type'        => 'setup',
-        'url'         => 'https://github.com/daxiangroup/setup/archive/',
+        //'url'         => 'https://github.com/daxiangroup/setup/archive/',*/
+        'url'         => 'https://github.com/daxiangroup/setup.git',
         'label'       => 'lithium',
         'tag'         => 'master',
         'description' => 'Daxian Group Webserver - lithium',
@@ -33,10 +34,11 @@ return array(
         //'deps'  => 'apache2, php5, php-mysql',
     ),
     'thelastprophet' => array(
-        'type'  => 'site',
-        'url'   => 'https://github.com/daxiangroup/thelastprophet/archive/',
-        'label' => 'thelastprophet',
-        'tag'   => 'master',
-        'role'  => 'lithium',
+        'type'        => 'site',
+        'url'         => 'https://github.com/daxiangroup/thelastprophet.git',
+        'label'       => 'thelastprophet',
+        'tag'         => 'master',
+        'role'        => 'lithium',
+        'description' => 'Landing page for a novella'
     ),
 );

@@ -14,11 +14,14 @@ class PackageBuilder
 {
     //const PATH_build          = '/noc/build';
     const PATH_BUILD          = '/Users/tylers/Sites/DG-setup/';
-    const PATH_PACKAGES       = '/Users/tylers/Sites/DG-setup/packages/';
-    const PATH_BINARIES       = '/Users/tylers/Sites/DG-setup/binaries/';
+    //const PATH_PACKAGES       = '/Users/tylers/Sites/DG-setup/packages/';
+    const PATH_PACKAGES       = '/Users/tylers/Sites/build/packages/';
+    //const PATH_BINARIES       = '/Users/tylers/Sites/DG-setup/binaries/';
+    const PATH_BINARIES       = '/Users/tylers/Sites/build/binaries/';
     const PATH_SITE_DIRECTORY = 'opt/sites';
     const CREATE_PERMISSION   = 0755;
     const FILE_REMOTES        = 'makedeb-remotes.ini.php';
+    const FILE_MAPPING        = 'makedeb-roleMapping.ini.php';
 
     // Build stage constants
     const STAGE_VALIDATION      = '[.Validation........]';
@@ -37,6 +40,7 @@ class PackageBuilder
     {
         // General (setup) constants
         $this->remotes = $this->buildRemotes = require_once(self::FILE_REMOTES);
+        $this->mapping = require_once(self::FILE_MAPPING);
         $this->buildPaths();
     }
 
@@ -114,11 +118,13 @@ class PackageBuilder
                 continue;
             }
 
+            /*
             if (!$this->unzipRemote($package, $packageName)) {
                 $this->logMessage(self::STAGE_REMOTES, $package.' | Couldn\'t unzip remote, skipping');
                 unset($this->buildRemotes[$package]);
                 continue;
             }
+            */
 
             //$this->cleanAdminFiles($package);
             $this->buildControlFile($package);
@@ -160,6 +166,8 @@ class PackageBuilder
                     return false;
                 }
                 break;
+            case 'setup':
+                break;
         }
 
         $this->logMessage('', ' OK');
@@ -170,6 +178,9 @@ class PackageBuilder
     {
         $packageData = $this->remotes[$package];
         $deps = (isset($packageData['deps']) ? $packageData['deps'] : 'apache2, php5');
+        if ($packageData['type'] == 'site') {
+            $deps .= ", ".$this->mapping[$packageData['role']];
+        }
 
         $this->logMessage(self::STAGE_BUILD_PACKAGE, PAD2.'Creating control file...', false);
         //Version: 1.".date("ymd").(isset($packageData['tag']) ? '-'.$packageData['tag'] : '')."
@@ -198,10 +209,8 @@ Description: ".(isset($packageData['description']) ? $packageData['description']
 
         switch ($this->remotes[$package]['type']) {
             case 'site':
-                return $this->getRemoteSite($package);
-                break;
             case 'setup':
-                return $this->get_remote_setup();
+                return $this->getRemoteSite($package);
                 break;
         }
     }
@@ -210,9 +219,31 @@ Description: ".(isset($packageData['description']) ? $packageData['description']
     {
         $packageData = $this->remotes[$package];
 
+        $passThru = array(
+            $package,
+            $packageData['url'],
+            $packageData['tag'],
+            $packageData['type'],
+        );
+
+        passthru('sh makedeb-gitcheckout.sh '.implode(' ', $passThru));
+        $this->logMessage('', ' OK');
+        return true;
+    }
+    /*
+    private function getRemoteSite($package)
+    {
+        $packageData = $this->remotes[$package];
+
         //$filename = explode('/', $packageData['url']);
         //$filename = self::PATH_PACKAGES.$package.'/'.self::PATH_SITE_DIRECTORY.'/'.$packageData['label'].$filename[sizeof($filename)-1];
-        $filename = self::PATH_PACKAGES.$package.'/'.self::PATH_SITE_DIRECTORY.'/'.$packageData['label'].'/'.$packageData['tag'].'.zip';
+        if ($packageData['type'] == 'site') {
+            $filename = self::PATH_PACKAGES.$package.'/'.self::PATH_SITE_DIRECTORY.'/'.$packageData['label'].'/'.$packageData['tag'].'.zip';
+        }
+
+        if ($packageData['type'] == 'setup') {
+            $filename = self::PATH_PACKAGES.$package.'/'.$packageData['tag'].'.zip';
+        }
 
         if ($this->verbose) {
             $this->logMessage(self::STAGE_REMOTES, PAD3.'Remote: '.$packageData['url'].$packageData['tag'].'.zip');
@@ -238,15 +269,23 @@ Description: ".(isset($packageData['description']) ? $packageData['description']
         $this->logMessage('', ' OK');
         return $filename;
     }
+    */
 
     private function unzipRemote($package, $packageName)
     {
         $packageData = $this->remotes[$package];
-        $path        = self::PATH_PACKAGES.$package.'/'.self::PATH_SITE_DIRECTORY.'/'.$packageData['label'].'/';
         $ignoreFiles = array(
             '.gitignore',
             'readme.md',
         );
+
+        if ($packageData['type'] == 'site') {
+            $path = self::PATH_PACKAGES.$package.'/'.self::PATH_SITE_DIRECTORY.'/'.$packageData['label'].'/';
+        }
+
+        if ($packageData['type'] == 'setup') {
+            $path = self::PATH_PACKAGES.$package.'/';
+        }
 
         $this->logMessage(self::STAGE_REMOTES, PAD2.'Unzipping '.$packageName);
 
@@ -265,13 +304,13 @@ Description: ".(isset($packageData['description']) ? $packageData['description']
                 $tmp_filename = $zip->getNameIndex($i);
                 $src          = 'zip://'.$packageName.'#'.$tmp_filename;
                 $tmp_fileinfo = pathinfo($tmp_filename);
-                //echo $tmp_filename.PHP_EOL;
-                //print_r($tmp_fileinfo);
+                echo $tmp_filename.PHP_EOL;
+                print_r($tmp_fileinfo);
 
                 $dst  = $path.preg_replace('/^'.$packageData['label'].'-'.$packageData['tag'].'\/?/', '', $tmp_fileinfo['dirname']);
                 $dst .= '/'.$tmp_fileinfo['basename'];
 
-                //echo "BASENAME: ".basename($dst).PHP_EOL;
+                echo "BASENAME: ".basename($dst).PHP_EOL;
                 if (array_search(basename($dst), $ignoreFiles) !== false) {
                     if ($this->verbose) {
                         $this->logMessage(self::STAGE_REMOTES, PAD3.'i Ignoring '.$dst);
@@ -302,7 +341,7 @@ Description: ".(isset($packageData['description']) ? $packageData['description']
                     copy($src, $dst);
                 }
 
-                //echo 'src: '.$src.PHP_EOL.'dst: '.$dst.PHP_EOL.'base: '.dirname($dst).PHP_EOL;
+                echo 'src: '.$src.PHP_EOL.'dst: '.$dst.PHP_EOL.'base: '.dirname($dst).PHP_EOL;
                 //copy("zip://".$packageName."#".$tmp_filename, self::PATH_PACKAGES.$package.'/'.self::PATH_SITE_DIRECTORY.'/'.$packageData['label'].'/'.$tmp_fileinfo['basename']);
 
                 if ($this->verbose) {
@@ -429,7 +468,7 @@ Description: ".(isset($packageData['description']) ? $packageData['description']
 // MAIN
 $options = array(
     'optsShort' => array('v'),
-    'optsLong'  => array('farts::', 'verbose'),
+    'optsLong'  => array('verbose'),
 );
 
 $opts = getopt(implode('', $options['optsShort']), $options['optsLong']);
